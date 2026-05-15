@@ -4,6 +4,7 @@ import requests
 import hashlib
 import json
 import plotly.express as px
+from collections import Counter  # <--- 이 줄을 꼭 추가해주세요!
 
 # --- 1. 설정 및 API ---
 API_KEY = "73c1ed10665a72ed5da4d109b49fdefe"
