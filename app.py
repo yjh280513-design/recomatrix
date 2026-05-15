@@ -1,5 +1,4 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import requests
 import random
@@ -9,8 +8,10 @@ import plotly.express as px
 # --- 설정 및 API ---
 API_KEY = "73c1ed10665a72ed5da4d109b49fdefe"
 BASE_URL = "https://api.themoviedb.org/3"
-# 주현님의 시트 주소
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1HUaqiosq1k_arbsxcwlCyP_4v3A6Ymrz1R-jIcgUiss/edit?usp=sharing"
+
+# 주현님의 시트 주소 (CSV 변환 주소로 자동 변경)
+SHEET_ID = "1HUaqiosq1k_arbsxcwlCyP_4v3A6Ymrz1R-jIcgUiss"
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
 def tmdb_api(endpoint, params={}):
     params['api_key'] = API_KEY
@@ -20,46 +21,40 @@ def tmdb_api(endpoint, params={}):
         return res.json()
     except: return {}
 
-def make_hashes(password):
-    return hashlib.sha256(str.encode(password)).hexdigest()
-
 st.set_page_config(page_title="RecoMatrix Pro v21.0", layout="wide")
 
-# --- 구글 시트 연결 설정 ---
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-@st.cache_data(ttl=5) # 5초마다 데이터 갱신
+# --- 구글 시트 데이터 로드 ---
+@st.cache_data(ttl=5)
 def load_data():
-    return conn.read(spreadsheet=SHEET_URL, worksheet="0") # 첫 번째 탭 읽기
+    try:
+        # 구글 시트를 CSV 형태로 직접 읽어옵니다. (설치 오류 없음!)
+        return pd.read_csv(SHEET_URL)
+    except Exception as e:
+        st.error(f"시트를 읽어오지 못했습니다: {e}")
+        return pd.DataFrame(columns=['user_id', 'title', 'rating', 'poster_path', 'media_type', 'content_id'])
 
 # --- 로그인 세션 ---
 if 'user_id' not in st.session_state:
     st.title("🎬 RecoMatrix 로그인")
     u = st.text_input("아이디")
-    p = st.text_input("비밀번호", type="password")
     if st.button("접속"):
         st.session_state['user_id'] = u
         st.rerun()
     st.stop()
 
 USER_ID = st.session_state['user_id']
-st.sidebar.title(f"👤 {USER_ID}님")
-
-# 데이터 불러오기
-try:
-    df = load_data()
-except:
-    df = pd.DataFrame(columns=['user_id', 'title', 'rating', 'poster_path', 'media_type', 'content_id'])
+df = load_data()
 
 # --- 메인 화면 ---
-st.write("### ✅ 연결 성공! 주현님의 구글 시트 데이터")
-if not df.empty:
-    user_df = df[df['user_id'] == USER_ID]
-    st.dataframe(user_df)
-else:
-    st.info("시트에 데이터가 없습니다. 시트 첫 줄에 제목이 있는지 확인해 주세요!")
+st.title(f"🚀 {USER_ID}님의 대시보드")
+st.write("구글 스프레드시트와 직접 연결된 상태입니다.")
 
-# 평점 추가 버튼 예시
-if st.button("테스트 데이터 시트에 쓰기 (방법 안내)"):
-    st.write("👉 시트에 직접 쓰기 기능을 활성화하려면 Streamlit의 'Secrets' 설정이 필요합니다.")
-    st.write("일단 읽기 기능이 잘 되는지 확인한 후, 쓰기 설정을 도와드릴게요!")
+if not df.empty:
+    user_df = df[df['user_id'].astype(str) == str(USER_ID)]
+    if not user_df.empty:
+        st.success(f"현재 {len(user_df)}개의 평점 데이터를 불러왔습니다.")
+        st.dataframe(user_df, use_container_width=True)
+    else:
+        st.warning(f"'{USER_ID}' 계정으로 등록된 데이터가 시트에 없습니다.")
+else:
+    st.info("시트가 비어있거나 연결이 원활하지 않습니다. 구글 시트의 [공유] 설정이 [편집자]로 되어 있는지 확인해 주세요!")
