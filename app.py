@@ -10,12 +10,10 @@ import random
 # --- 1. 설정 및 API ---
 API_KEY = "73c1ed10665a72ed5da4d109b49fdefe"
 BASE_URL = "https://api.themoviedb.org/3"
-# 주현님이 제공해주신 최신 Google Apps Script URL 반영
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzdhi4I85YhuO3vP4c23MIqEEN8rmVr6Mka2mDOSaO_LaOcN9PSv1XO3tfvQEava8iehw/exec"
 SHEET_ID = "1HUaqiosq1k_arbsxcwlCyP_4v3A6Ymrz1R-jIcgUiss"
 SHEET_READ_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
-# OTT 정보 설정 (로고 및 검색 URL)
 OTT_INFO = {
     "Netflix": {"name": "넷플릭스", "url": "https://www.netflix.com/search?q=", "logo": "https://www.edigitalagency.com.au/wp-content/uploads/Netflix-logo-red-black-png.png"},
     "Disney Plus": {"name": "디즈니+", "url": "https://www.disneyplus.com/search?q=", "logo": "https://cnbl-cdn.bamgrid.com/assets/7fa24ec18a09bc08183181827448377759d5a7d78018e6e5a07204781467554c/original"},
@@ -35,7 +33,6 @@ def tmdb_api(endpoint, params={}):
 
 def send_to_google(data):
     try:
-        # content_id를 소수점 없는 문자열로 변환하여 전송 오류 방지
         if 'content_id' in data:
             data['content_id'] = str(int(float(data['content_id'])))
         res = requests.post(WEB_APP_URL, data=json.dumps(data))
@@ -45,14 +42,13 @@ def send_to_google(data):
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        # 데이터 로드 시 ID 컬럼을 문자열로 고정
         df = pd.read_csv(SHEET_READ_URL, dtype={'content_id': str, 'user_id': str})
         return df.dropna(subset=['user_id'])
     except:
         return pd.DataFrame(columns=['user_id', 'password', 'title', 'rating', 'poster_path', 'media_type', 'content_id'])
 
 # --- 2. 기본 설정 및 데이터 로드 ---
-st.set_page_config(page_title="RecoMatrix Pro v6.0", layout="wide")
+st.set_page_config(page_title="RecoMatrix Pro v6.1", layout="wide")
 df = load_data()
 
 if 'user_id' not in st.session_state:
@@ -82,13 +78,12 @@ if 'user_id' not in st.session_state:
 # --- 3. 데이터 및 세션 관리 ---
 USER_ID = str(st.session_state['user_id'])
 my_df = df[(df['user_id'] == USER_ID) & (~df['title'].str.contains("SYSTEM|가입환영", na=False))]
-# 내 라이브러리에 있는 ID 리스트 (중복 추천 및 등록 방지용)
 my_content_ids = [str(int(float(cid))) for cid in my_df['content_id'].dropna() if cid != "0"]
 
 def clear_detail():
     if 'view_detail' in st.session_state: del st.session_state['view_detail']
 
-# --- 4. 사이드바 (내 취향 분석 및 설정) ---
+# --- 4. 사이드바 ---
 st.sidebar.title(f"👤 {USER_ID}님")
 page = st.sidebar.radio("메뉴 이동", ["✨ 통합 추천", "📚 내 라이브러리", "🔍 작품 검색"], on_change=clear_detail)
 
@@ -112,7 +107,7 @@ if st.sidebar.button("로그아웃"):
     del st.session_state['user_id']
     st.rerun()
 
-# --- 5. 상세 정보 레이어 (줄거리, OTT, 비슷한 작품) ---
+# --- 5. 상세 정보 레이어 ---
 if 'view_detail' in st.session_state:
     r = st.session_state['view_detail']
     st.button("🔙 목록으로", on_click=clear_detail)
@@ -142,21 +137,24 @@ if 'view_detail' in st.session_state:
 
         st.divider()
         st.subheader("🍿 비슷한 작품 추천")
-        recs = tmdb_api(f"/{m_type}/{r['id']}/recommendations")["results"]
-        if recs:
+        # [수정됨] 상세페이지 추천작에서도 이미 내 라이브러리에 있는 것은 제외
+        recs_data = tmdb_api(f"/{m_type}/{r['id']}/recommendations")["results"]
+        filtered_recs = [rec for rec in recs_data if str(rec['id']) not in my_content_ids][:4]
+        
+        if filtered_recs:
             rcols = st.columns(4)
-            for i, rec in enumerate(recs[:4]):
+            for i, rec in enumerate(filtered_recs):
                 with rcols[i]:
                     st.image(f"https://image.tmdb.org/t/p/w500{rec.get('poster_path','')}")
                     if st.button("보기", key=f"rec_{rec['id']}"):
                         rec['media_type'] = m_type
                         st.session_state['view_detail'] = rec
                         st.rerun()
+        else: st.write("추천할 새로운 비슷한 작품이 없습니다.")
     st.stop()
 
 # --- 6. 페이지별 메인 콘텐츠 ---
 
-# (1) 통합 추천 (라이브러리 중복 제외 기능 추가)
 if page == "✨ 통합 추천":
     st.header("✨ 내 취향 기반 추천")
     high_rated = my_df[my_df['rating'] >= 4.0]
@@ -168,10 +166,7 @@ if page == "✨ 통합 추천":
                 for item in res[:20]:
                     item['media_type'] = row.media_type
                     cid = str(item['id'])
-                    
-                    # [핵심] 이미 내 라이브러리에 있으면 추천에서 제외
                     if cid in my_content_ids: continue
-                    
                     p_info = tmdb_api(f"/{item['media_type']}/{item['id']}/watch/providers").get('results', {}).get('KR', {}).get('flatrate', [])
                     if any(any(ott.lower() in p['provider_name'].lower() for ott in sel_ott) for p in p_info):
                         if not any(x['id'] == item['id'] for x in all_list):
@@ -188,10 +183,9 @@ if page == "✨ 통합 추천":
                     if st.button("상세보기", key=f"tr_{r['id']}"):
                         st.session_state['view_detail'] = r
                         st.rerun()
-        else: st.warning("추천할 새로운 작품이 없습니다. OTT 필터를 확인해보세요!")
+        else: st.warning("추천할 새로운 작품이 없습니다.")
     else: st.info("평점 4점 이상 작품을 등록하면 추천이 시작됩니다.")
 
-# (2) 내 라이브러리 (포스터 4개씩, 상세/수정 버튼)
 elif page == "📚 내 라이브러리":
     st.header("📚 내 라이브러리")
     if not my_df.empty:
@@ -217,7 +211,6 @@ elif page == "📚 내 라이브러리":
                                 st.rerun()
     else: st.info("보관함이 비어있습니다.")
 
-# (3) 작품 검색 (중복 등록 방지)
 elif page == "🔍 작품 검색":
     st.header("🔍 작품 검색")
     query = st.text_input("제목을 입력하세요")
