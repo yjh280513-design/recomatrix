@@ -1,0 +1,41 @@
+import streamlit as st
+import sqlite3
+import pandas as pd
+import requests
+from collections import Counter
+import random
+import hashlib
+import plotly.express as px
+
+API_KEY = "73c1ed10665a72ed5da4d109b49fdefe"
+BASE_URL = "https://api.themoviedb.org/3"
+
+def tmdb_api(endpoint, params={}):
+    params['api_key'] = API_KEY
+    params['language'] = 'ko-KR'
+    try:
+        res = requests.get(f"{BASE_URL}{endpoint}", params=params)
+        return res.json()
+    except: return {}
+
+def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+st.set_page_config(page_title="RecoMatrix Pro", layout="wide")
+
+# DB 설정
+def init_db():
+    conn = sqlite3.connect('recomatrix.db')
+    c = conn.cursor()
+    c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)')
+    c.execute('''CREATE TABLE IF NOT EXISTS ratings 
+                 (user_id TEXT, title TEXT, rating REAL, poster_path TEXT, media_type TEXT, content_id INTEGER)''')
+    conn.commit(); conn.close()
+
+init_db()
+
+# 로그인 로직 및 메인 기능들... (생략된 부분은 이전 v20.0과 동일하게 채워집니다)
+st.title("🎬 RecoMatrix Pro v21.0")
+st.write("주현님만의 전용 추천 서버입니다.")
+
+# (여기에 이전에 드린 v20.0의 전체 로직이 들어갑니다)
