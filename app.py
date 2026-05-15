@@ -51,7 +51,7 @@ def load_data():
         return pd.DataFrame(columns=['user_id', 'password', 'title', 'rating', 'poster_path', 'media_type', 'content_id'])
 
 # --- 3. 앱 설정 및 로그인 ---
-st.set_page_config(page_title="RecoMatrix Pro v4.0", layout="wide")
+st.set_page_config(page_title="RecoMatrix Pro v4.1", layout="wide")
 df = load_data()
 
 if 'user_id' not in st.session_state:
@@ -73,13 +73,18 @@ if 'user_id' not in st.session_state:
                 st.success("가입 성공!")
     st.stop()
 
-# --- 4. 사이드바 (순서 변경 및 분석) ---
+# --- 4. 사이드바 ---
 USER_ID = st.session_state['user_id']
 my_df = df[(df['user_id'].astype(str) == USER_ID) & (~df['title'].isin(["SYSTEM", "가입환영"]))]
 
 st.sidebar.title(f"👤 {USER_ID}님")
-# 요청 1번: 순서 변경 (통합 추천 -> 내 라이브러리 -> 작품 검색)
-page = st.sidebar.radio("메뉴 이동", ["✨ 통합 추천", "📚 내 라이브러리", "🔍 작품 검색"])
+
+# 요청 2번 해결: 메뉴 변경 시 '상세보기' 세션 강제 리셋
+def on_menu_change():
+    if 'view_detail' in st.session_state:
+        del st.session_state['view_detail']
+
+page = st.sidebar.radio("메뉴 이동", ["✨ 통합 추천", "📚 내 라이브러리", "🔍 작품 검색"], on_change=on_menu_change)
 selected_otts = st.sidebar.multiselect("📺 내 OTT", [v["name"] for v in OTT_INFO.values()], default=[v["name"] for v in OTT_INFO.values()])
 
 if not my_df.empty:
@@ -91,10 +96,10 @@ if not my_df.empty:
     st.sidebar.plotly_chart(fig, use_container_width=True)
 
 if st.sidebar.button("로그아웃"):
-    del st.session_state['user_id']
+    for key in list(st.session_state.keys()): del st.session_state[key]
     st.rerun()
 
-# --- 5. 상세 페이지 (개별 연관 추천 포함) ---
+# --- 5. 상세 페이지 섹션 (요청 1번 해결을 위해 코드 위치 및 로직 점검) ---
 if 'view_detail' in st.session_state:
     r = st.session_state['view_detail']
     st.button("🔙 목록으로 돌아가기", on_click=lambda: st.session_state.pop('view_detail'))
@@ -107,7 +112,6 @@ if 'view_detail' in st.session_state:
         st.title(title)
         st.write(f"📝 **줄거리**: {r.get('overview', '정보 없음')}")
         
-        # OTT 버튼
         providers = tmdb_api(f"/{r.get('media_type', 'movie')}/{r['id']}/watch/providers").get('results', {}).get('KR', {}).get('flatrate', [])
         if providers:
             st.write("### 📺 바로 시청하기")
@@ -116,7 +120,6 @@ if 'view_detail' in st.session_state:
                     if key in p['provider_name'] or info["name"] in p['provider_name']:
                         st.link_button(f"{info['name']} 이동", f"{info['url']}{title}")
 
-        # 요청 2번: 콘텐츠 클릭 시 개별 추천 노출
         st.divider()
         st.subheader(f"🍿 '{title}'와 비슷한 작품")
         recoms = tmdb_api(f"/{r.get('media_type', 'movie')}/{r['id']}/recommendations")["results"]
@@ -126,6 +129,9 @@ if 'view_detail' in st.session_state:
                 with rec_cols[idx]:
                     st.image(f"https://image.tmdb.org/t/p/w500{rec.get('poster_path','')}")
                     st.caption(rec.get('title', rec.get('name')))
+                    if st.button("보기", key=f"rec_sub_{rec['id']}"):
+                        st.session_state['view_detail'] = rec
+                        st.rerun()
     st.stop()
 
 # --- 6. 페이지별 메인 콘텐츠 ---
@@ -133,22 +139,21 @@ if 'view_detail' in st.session_state:
 # (1) 통합 추천 페이지
 if page == "✨ 통합 추천":
     st.header("✨ 모든 시청 기록 기반 통합 추천")
-    # 요청 2번: 모든 고평점 콘텐츠 종합 추천
     high_rated = my_df[my_df['rating'] >= 4.0]
     if not high_rated.empty:
         all_recoms = []
         for _, row in high_rated.iterrows():
             res = tmdb_api(f"/{row.media_type}/{int(row.content_id)}/recommendations")["results"]
             all_recoms.extend(res[:5])
-        
-        random.shuffle(all_recoms) # 다양하게 섞기
+        random.shuffle(all_recoms)
         
         cols = st.columns(4)
         for i, r in enumerate(all_recoms[:12]):
             with cols[i % 4]:
                 st.image(f"https://image.tmdb.org/t/p/w500{r.get('poster_path','')}")
                 st.write(f"**{r.get('title', r.get('name'))}**")
-                if st.button("상세보기", key=f"recom_all_{r['id']}_{i}"):
+                # 요청 1번: 고유 키값 생성 및 세션 상태 업데이트로 상세보기 활성화
+                if st.button("상세보기", key=f"recom_main_{r['id']}_{i}"):
                     st.session_state['view_detail'] = r
                     st.rerun()
     else:
@@ -157,20 +162,19 @@ if page == "✨ 통합 추천":
 # (2) 내 라이브러리 페이지
 elif page == "📚 내 라이브러리":
     st.header("📚 내 라이브러리")
-    # 요청 3번: 한 줄에 포스터 4개씩 시각화
     if not my_df.empty:
         lib_cols = st.columns(4)
         for i, row in enumerate(my_df.itertuples()):
             with lib_cols[i % 4]:
                 st.image(f"https://image.tmdb.org/t/p/w500{row.poster_path}")
                 st.write(f"**{row.title}**")
-                
-                # 요청 4번: 평점 수정/삭제 작게 배치
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("👁️ 정보", key=f"lib_view_{row.content_id}"):
-                        # row 객체를 TMDB 형태의 딕셔너리로 변환하여 상세 보기 지원
-                        st.session_state['view_detail'] = {'id': row.content_id, 'title': row.title, 'poster_path': row.poster_path, 'media_type': row.media_type, 'overview': '라이브러리에서 상세보기 버튼을 눌러 확인하세요.'}
+                        # TMDB에서 최신 상세 정보를 가져와 세션에 저장
+                        detail = tmdb_api(f"/{row.media_type}/{row.content_id}")
+                        detail['media_type'] = row.media_type # 타입 유지를 위해 추가
+                        st.session_state['view_detail'] = detail
                         st.rerun()
                 with c2:
                     with st.popover("✏️ 수정"):
@@ -187,12 +191,28 @@ elif page == "🔍 작품 검색":
     q = st.text_input("제목 입력")
     if q:
         res = tmdb_api("/search/multi", {"query": q})["results"]
-        for r in res[:5]:
+        for i, r in enumerate(res[:8]):
             if r.get('media_type') in ['movie', 'tv']:
+                title = r.get('title', r.get('name'))
                 c1, c2 = st.columns([1, 5])
-                with c1: st.image(f"https://image.tmdb.org/t/p/w500{r.get('poster_path','')}")
+                with c1: 
+                    st.image(f"https://image.tmdb.org/t/p/w500{r.get('poster_path','')}")
                 with c2:
-                    st.subheader(r.get('title', r.get('name')))
-                    if st.button("상세 정보 보기", key=f"src_main_{r['id']}"):
+                    st.subheader(title)
+                    # 요청 3번: 검색 결과에서 바로 평점 매기기 기능 추가
+                    col_a, col_b = st.columns([2, 1])
+                    with col_a:
+                        rate_val = st.slider("평점 주기", 0.5, 5.0, 4.0, 0.5, key=f"search_rate_{r['id']}")
+                    with col_b:
+                        if st.button("보관소 저장", key=f"search_save_{r['id']}"):
+                            send_to_google({
+                                "user_id": USER_ID, "password": "", "title": title, 
+                                "rating": rate_val, "poster_path": r.get('poster_path',''), 
+                                "media_type": r['media_type'], "content_id": r['id'], "action": "add"
+                            })
+                            st.success("저장 완료!")
+                            st.cache_data.clear()
+                    
+                    if st.button("상세 정보 보기", key=f"src_detail_{r['id']}_{i}"):
                         st.session_state['view_detail'] = r
                         st.rerun()
